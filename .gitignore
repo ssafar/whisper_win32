@@ -1,0 +1,7 @@
+*_h.h
+*_i.c
+*_p.c
+.vs
+*.user
+dlldata.c
+*.aps

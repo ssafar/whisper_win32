@@ -1,0 +1,34 @@
+import "oaidl.idl";
+import "ocidl.idl";
+
+[
+    object,
+    uuid("7e7c835f-2149-4efb-96c5-0f71010f642c"), // iid here
+    oleautomation,
+    // nonextensible,
+    // pointer_default(unique)
+]
+interface IRecorder : IDispatch {
+    HRESULT StartRecording();
+    HRESULT StopRecording([out, retval] BSTR* pResult);
+}
+
+[
+    uuid("c6432a7e-c4a1-4c79-a532-e3c959e17679"), // This is the CLSID
+    helpstring("The Recorder Interface")
+]
+coclass Recorder
+{
+    [default] interface IRecorder;
+}
+
+[
+    uuid(c088605e-3d68-4d7f-ad18-47e2b778b92e), // Unique identifier for the library
+    version(1.0),
+    helpstring("A sample IDL file for InterfaceDescriptions.com")
+]
+library RecorderLib
+{
+  interface IRecorder;
+
+}
