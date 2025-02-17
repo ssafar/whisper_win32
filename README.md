@@ -1,5 +1,7 @@
 This is a GUI for OpenAI's Whisper TTS model... or anything with a compatible API.
 
+![main_window](https://github.com/user-attachments/assets/267aae50-adab-4da0-b647-3f093eb92895)
+
 # Project status
 
 As you might have guessed from the existence of various buttons for which there isn't a lot of explanation, this is a side project of mine that I have, for some reason, decided to put on the internet. Do not expect it to work in any meaningful way. (It might work though.)
@@ -38,6 +40,8 @@ This is using COM to communicate; no TCP ports involved! It also works under Win
 
 
 # Setup
+
+![settings](https://github.com/user-attachments/assets/22c8af2b-4bb8-474c-b75d-191c8659202a)
 
 You should start by either setting an OpenAI API key for the official OpenAI Whisper API, or, if you're running Whisper locally, pointing it at an endpoint that has the same API.
 
