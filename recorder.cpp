@@ -519,12 +519,12 @@ void OnRecordOrStop(HWND hwnd)
     if (!isRecording)
     {
         StartRecording();
-        SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Stop");
+        SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Stop [F8]");
     }
     else
     {
         StopRecording();
-        SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Record");
+        SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Record [F8]");
         SendToWhisperAsync();
     }
     isRecording = !isRecording;
