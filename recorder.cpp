@@ -1,4 +1,4 @@
-#include "recorder_h.h"
+
 
 // for sprintf etc.
 #define _CRT_SECURE_NO_WARNINGS
@@ -11,16 +11,14 @@
 #include "utils.hpp"
 
 #include <commctrl.h>
-#include <comutil.h>
+
 #include <curl/curl.h>
 #include <dsound.h>
 #include <lame/lame.h>
 #include <process.h>
 
-#include <codecvt>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <optional>
 #include <sstream>
 
@@ -29,7 +27,7 @@
 constexpr int WM_REQUEST_DONE = WM_USER + 1;
 constexpr int WM_TRAYICON = WM_USER + 2;
 
-EXTERN_C const CLSID CLSID_Recorder;
+
 #pragma comment(lib, "dsound.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "user32.lib")
@@ -70,10 +68,6 @@ HWND hwndDialog;
 
 // For the COM API
 constexpr int PROCESSING_TIME_TIMEOUT_MS = 15000;
-
-// Was this started from the UI? (reset by completion, set possibly by the COM
-// interface.)
-bool stopped_by_com = false;
 
 // This is the JSON
 std::string the_results;
@@ -283,21 +277,13 @@ void SendToWhisper()
     if (results_obj.contains("text"))
     {
         returned_text = results_obj["text"];
-        if (stopped_by_com)
-        {
-            SetEvent(hResultsReadyEvent);
-        }
-        else
-        {
-            InjectTextToTarget(returned_text.value());
-        }
+        InjectTextToTarget(returned_text.value());
     }
     else
     {
         returned_text = std::nullopt;
     }
 
-    stopped_by_com = false;
     PostMessage(hwndDialog, WM_REQUEST_DONE, 0, 0);
 }
 
@@ -700,271 +686,8 @@ void StopRecording()
     }
 }
 
-// Assuming IRecorder and related interfaces are properly defined.
+;
 
-class Recorder : public IRecorder
-{
-    long m_refCount;
-
-public:
-    Recorder()
-      : m_refCount(1)
-    {
-    }
-
-    // IUnknown methods
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override
-    {
-        if (riid == IID_IUnknown || riid == IID_IRecorder || riid == IID_IDispatch)
-        {
-            *ppvObject = static_cast<IDispatch*>(this);
-            AddRef();
-            return S_OK;
-        }
-        else
-        {
-            *ppvObject = nullptr;
-            return E_NOINTERFACE;
-        }
-    }
-
-    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
-
-    ULONG STDMETHODCALLTYPE Release() override
-    {
-        ULONG ulRefCount = InterlockedDecrement(&m_refCount);
-        if (ulRefCount == 0)
-        {
-            delete this;
-        }
-        return ulRefCount;
-    }
-
-    // IDispatch methods
-    HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT* pctinfo) override
-    {
-        *pctinfo = 0;  // Assuming no type info is provided
-        return S_OK;
-    }
-
-    HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT iTInfo, LCID lcid, ITypeInfo** ppTInfo) override
-    {
-        *ppTInfo = nullptr;  // No type info available
-        return E_NOTIMPL;
-    }
-
-    HRESULT STDMETHODCALLTYPE GetIDsOfNames(
-        REFIID riid, LPOLESTR* rgszNames, UINT cNames, LCID lcid, DISPID* rgDispId) override
-    {
-        // Typically, you would use a map or some other structure to manage names and DISPID values
-        // For simplicity, assume a simple implementation where "StartRecording" has DISPID 1 and
-        // "StopRecording" has DISPID 2
-        HRESULT hr = S_OK;
-        for (UINT i = 0; i < cNames; i++)
-        {
-            if (_wcsicmp(rgszNames[i], L"StartRecording") == 0)
-            {
-                rgDispId[i] = 1;
-            }
-            else if (_wcsicmp(rgszNames[i], L"StopRecording") == 0)
-            {
-                rgDispId[i] = 2;
-            }
-            else
-            {
-                rgDispId[i] = DISPID_UNKNOWN;
-                hr = DISP_E_UNKNOWNNAME;
-            }
-        }
-        return hr;
-    }
-
-    HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember,
-                                     REFIID riid,
-                                     LCID lcid,
-                                     WORD wFlags,
-                                     DISPPARAMS* pDispParams,
-                                     VARIANT* pVarResult,
-                                     EXCEPINFO* pExcepInfo,
-                                     UINT* puArgErr) override
-    {
-        switch (dispIdMember)
-        {
-        case 1:  // StartRecording
-            if (wFlags & DISPATCH_METHOD)
-            {
-                return StartRecording();
-            }
-            break;
-        case 2:  // StopRecording
-            if (wFlags & DISPATCH_METHOD)
-            {
-                BSTR resultString = NULL;
-                HRESULT hr = StopRecording(&resultString);
-                if (FAILED(hr)) return hr;
-
-                // Ensure pVarResult is not NULL
-                if (pVarResult != NULL)
-                {
-                    VariantClear(pVarResult);  // Clear the VARIANT and free previous data if any
-                    pVarResult->vt = VT_BSTR;  // Set type to BSTR
-                    pVarResult->bstrVal = resultString;  // Assign the BSTR to the VARIANT
-                }
-                else
-                {
-                    // Optional: Free resultString if pVarResult is NULL to avoid memory leaks
-                    SysFreeString(resultString);
-                }
-                return S_OK;
-            }
-            break;
-        default:
-            return DISP_E_MEMBERNOTFOUND;
-        }
-        return S_OK;
-    }
-
-    // IRecorder methods
-    HRESULT STDMETHODCALLTYPE StartRecording() override
-    {
-        std::cout << "start called!" << std::endl;
-        if (isRecording)
-        {
-            return S_OK;
-        }
-
-        SendMessage(hwndDialog, WM_COMMAND, IDC_RECORD, 0);
-        return S_OK;
-    }
-
-    HRESULT STDMETHODCALLTYPE StopRecording(BSTR* pResult) override
-    {
-        if (!isRecording)
-        {
-            return S_OK;
-        }
-
-        if (pResult == nullptr)
-        {
-            return E_POINTER;
-        }
-
-        stopped_by_com = true;
-
-        SendMessage(hwndDialog, WM_COMMAND, IDC_RECORD, 0);
-
-        // DWORD dwWaitResult = WaitForSingleObject(hResultsReadyEvent, PROCESSING_TIME_TIMEOUT_MS);
-        DWORD dwWaitResult;
-        HRESULT hr =
-            CoWaitForMultipleHandles(COWAIT_DISPATCH_CALLS | COWAIT_DISPATCH_WINDOW_MESSAGES,
-                                     PROCESSING_TIME_TIMEOUT_MS,
-                                     1,
-                                     &hResultsReadyEvent,
-                                     &dwWaitResult);
-
-        if (FAILED(hr))
-        {
-            return hr;
-        }
-        if (dwWaitResult != WAIT_OBJECT_0)
-        {
-            return HRESULT_FROM_WIN32(ERROR_TIMEOUT);
-        }
-
-        ResetEvent(hResultsReadyEvent);
-
-        if (!returned_text.has_value())
-        {
-            // Could be somewhat more specific?
-            return E_FAIL;
-        }
-
-        // Convert std::string to BSTR
-        _bstr_t bstrResult(returned_text.value().c_str());
-
-        // Assign the BSTR to the output parameter, with proper AddRef
-        *pResult = bstrResult.copy();
-
-        if (*pResult == nullptr)
-        {
-            return E_OUTOFMEMORY;
-        }
-
-        return S_OK;
-    }
-};
-
-// ... aand a class factory
-class RecorderFactory : public IClassFactory
-{
-public:
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override
-    {
-        if (riid == IID_IUnknown || riid == IID_IClassFactory)
-        {
-            *ppvObject = static_cast<IClassFactory*>(this);
-            AddRef();
-            return S_OK;
-        }
-        else
-        {
-            *ppvObject = nullptr;
-            return E_NOINTERFACE;
-        }
-    }
-
-    ULONG STDMETHODCALLTYPE AddRef() override
-    {
-        // Return a constant because this is a singleton
-        return 2;
-    }
-
-    ULONG STDMETHODCALLTYPE Release() override
-    {
-        // Return a constant because this is a singleton
-        return 1;
-    }
-
-    HRESULT STDMETHODCALLTYPE CreateInstance(IUnknown* pUnkOuter,
-                                             REFIID riid,
-                                             void** ppvObject) override
-    {
-        wchar_t guidString[39];
-        StringFromGUID2(riid, guidString, 39);
-
-        std::wcout << "createInstance!!! " << guidString << std::endl;
-
-        if (pUnkOuter != nullptr)
-        {
-            return CLASS_E_NOAGGREGATION;
-        }
-
-        Recorder* pRecorder = new Recorder();
-        HRESULT hr = pRecorder->QueryInterface(riid, ppvObject);
-        pRecorder->Release();  // Release initial reference
-        return hr;
-    }
-
-    HRESULT STDMETHODCALLTYPE LockServer(BOOL fLock) override
-    {
-        // Manage lock count
-        return S_OK;
-    }
-};
-
-HRESULT RegisterRecorderTypeLib(HMODULE hModule) {
-    wchar_t szPath[MAX_PATH];
-    if (!GetModuleFileName(hModule, szPath, MAX_PATH)) {
-        return HRESULT_FROM_WIN32(GetLastError());
-    }
-    ITypeLib* pTypeLib = nullptr;
-    HRESULT hr = LoadTypeLibEx(szPath, REGKIND_NONE, &pTypeLib);
-    if (SUCCEEDED(hr)) {
-        hr = RegisterTypeLibForUser(pTypeLib, szPath, nullptr);
-        pTypeLib->Release();
-    }
-    return hr;
-}
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
@@ -972,7 +695,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
     icex.dwICC = ICC_WIN95_CLASSES;
     InitCommonControlsEx(&icex);
-    RegisterRecorderTypeLib(hInstance);
 
     LoadSettingsFromRegistry();
 
@@ -989,37 +711,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // We need an explicit message pump to be able to process the global hotkey messages.
     HWND hwndDialog = CreateDialog(hInstance, MAKEINTRESOURCE(IDD_RECORDER), NULL, DialogProc);
-    std::unique_ptr<RecorderFactory> recorder_factory{std::make_unique<RecorderFactory>()};
-
-    DWORD dwRegister;
-    HRESULT hr = CoRegisterClassObject(CLSID_Recorder,
-                                       recorder_factory.get(),
-                                       CLSCTX_LOCAL_SERVER,
-                                       REGCLS_MULTIPLEUSE,
-                                       &dwRegister);
-    if (FAILED(hr))
-    {
-        // Function to retrieve the error message associated with the HRESULT
-        LPVOID lpMsgBuf;
-        DWORD dw = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                     FORMAT_MESSAGE_IGNORE_INSERTS,
-                                 NULL,
-                                 hr,
-                                 MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                                 (LPTSTR)&lpMsgBuf,
-                                 0,
-                                 NULL);
-
-        std::wcerr << L"Operation failed with error: " << static_cast<LPTSTR>(lpMsgBuf)
-                   << std::endl;
-
-        // Free the buffer allocated by FormatMessage
-        LocalFree(lpMsgBuf);
-    }
-    else
-    {
-        std::cout << "Operation succeeded." << std::endl;
-    }
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))
@@ -1038,7 +729,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         lpdsCapture->Release();
     }
 
-    CoRevokeClassObject(dwRegister);
     UnregisterHotKey(NULL, HKID_START_OR_STOP);
     CloseHandle(hResultsReadyEvent);
 
