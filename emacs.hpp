@@ -10,6 +10,7 @@ struct ConnectionInfo
 };
 
 
+void InjectTextToEmacs(const std::string& text);
 ConnectionInfo ReadEmacsConnectionInfo();
 void InvokeEmacs(const ConnectionInfo& connInfo, const std::string& invocation);
 

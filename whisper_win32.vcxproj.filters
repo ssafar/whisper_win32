@@ -30,6 +30,9 @@
     <ClCompile Include="emacs.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="text_injection.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Midl Include="recorder.idl">
@@ -55,6 +58,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="emacs.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="text_injection.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

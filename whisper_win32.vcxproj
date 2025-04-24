@@ -162,6 +162,7 @@
     <ClCompile Include="recorder.cpp" />
     <ClCompile Include="recorder_i.c" />
     <ClCompile Include="settings.cpp" />
+    <ClCompile Include="text_injection.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -175,6 +176,7 @@
     <ClInclude Include="recorder_h.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="settings.hpp" />
+    <ClInclude Include="text_injection.hpp" />
     <ClInclude Include="utils.hpp" />
   </ItemGroup>
   <ItemGroup>

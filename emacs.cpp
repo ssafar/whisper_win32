@@ -122,3 +122,14 @@ void InvokeEmacs(const ConnectionInfo& connInfo, const std::string& invocation)
     closesocket(s);
     WSACleanup();
 }
+
+void InjectTextToEmacs(const std::string& text)
+{
+    ConnectionInfo info = ReadEmacsConnectionInfo();
+    std::cout << "got emacs port: " << info.port << std::endl;
+
+    // ... we'll need to escape this too
+    InvokeEmacs(
+        info, "(with-current-buffer (window-buffer (selected-window)) (insert \"" + text + "\"))");
+}
+
