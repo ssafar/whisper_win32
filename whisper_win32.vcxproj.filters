@@ -27,6 +27,9 @@
     <ClCompile Include="recorder_i.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="emacs.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Midl Include="recorder.idl">
@@ -49,6 +52,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="recorder_h.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="emacs.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

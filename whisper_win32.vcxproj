@@ -158,6 +158,7 @@
     </Midl>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="emacs.cpp" />
     <ClCompile Include="recorder.cpp" />
     <ClCompile Include="recorder_i.c" />
     <ClCompile Include="settings.cpp" />
@@ -170,6 +171,7 @@
     <ResourceCompile Include="recorder.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="emacs.hpp" />
     <ClInclude Include="recorder_h.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="settings.hpp" />
