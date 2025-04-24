@@ -19,26 +19,6 @@ This will cause your recorded speech to be converted to MP3 and sent to Whisper.
 
 You might already have noticed that this has questionable levels of usability, given how "the application in the front" is this GUI. To solve this, we are registering a global hotkey on F8. This corresponds to the record / stop button.
 
-## Automation
-
-We also provide a command line utility, `whisper32cmd`, that lets you use an already running instance of the GUI program from the command line.
-
-```
-> whisper32cmd start
-Recording started.
-```
-
-presses the button for you. You talk. Then you invoke
-
-```
-> whisper32cmd stop
-Recording stopped. Result: Hey this is some stuff that I said between the two commands.
-
-```
-
-This is using COM to communicate; no TCP ports involved! It also works under Wine, on arbitrary operating systems.
-
-
 # Setup
 
 ![settings](https://github.com/user-attachments/assets/22c8af2b-4bb8-474c-b75d-191c8659202a)
