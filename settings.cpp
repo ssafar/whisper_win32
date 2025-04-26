@@ -17,9 +17,16 @@
 #define REGISTRY_ENDPOINT_VALUE L"endpoint"
 
 // Global variables to hold settings
-char g_OpenAIToken[256] = {0};
-char g_Endpoint[256] = {0};
+char g_OpenAIToken[256] = { 0 };
+char g_Endpoint[256] = { 0 };
 APIType g_APIType = API_OPENAI;
+
+// Add debugging variables
+DWORD g_LastRegError = 0;
+BOOL g_KeyOpened = FALSE;
+BOOL g_TokenLoaded = FALSE;
+BOOL g_TypeLoaded = FALSE;
+BOOL g_EndpointLoaded = FALSE;
 
 char* GetOpenAIToken() { return g_OpenAIToken; }
 char* GetCustomEndpoint() { return g_Endpoint; }
@@ -31,14 +38,31 @@ void LoadSettingsFromRegistry()
     HKEY hKey;
     DWORD dataSize;
 
-    // Open the registry key
-    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_PATH, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    // Reset debugging variables
+    g_LastRegError = 0;
+    g_KeyOpened = FALSE;
+    g_TokenLoaded = FALSE;
+    g_TypeLoaded = FALSE;
+    g_EndpointLoaded = FALSE;
+
+    // Open the registry key - store error code for debugging
+    g_LastRegError = RegOpenKeyExW(HKEY_CURRENT_USER, REGISTRY_PATH, 0, KEY_READ, &hKey);
+    if (g_LastRegError == ERROR_SUCCESS)
     {
-        // Load OpenAI token
-        dataSize = sizeof(g_OpenAIToken);
-        if (RegQueryValueEx(
-                hKey, REGISTRY_TOKEN_VALUE, NULL, NULL, (LPBYTE)g_OpenAIToken, &dataSize) !=
-            ERROR_SUCCESS)
+        g_KeyOpened = TRUE;
+
+        // Load OpenAI token - Unicode to ASCII conversion needed
+        wchar_t wideToken[256] = { 0 };
+        dataSize = sizeof(wideToken);
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_TOKEN_VALUE, NULL, NULL, (LPBYTE)wideToken, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
+        {
+            // Convert wide string to ASCII
+            WideCharToMultiByte(CP_ACP, 0, wideToken, -1, g_OpenAIToken, sizeof(g_OpenAIToken), NULL, NULL);
+            g_TokenLoaded = TRUE;
+        }
+        else
         {
             g_OpenAIToken[0] = '\0';
         }
@@ -46,19 +70,26 @@ void LoadSettingsFromRegistry()
         // Load API type
         DWORD apiType = API_OPENAI;
         dataSize = sizeof(apiType);
-        if (RegQueryValueEx(
-                hKey, REGISTRY_API_TYPE_VALUE, NULL, NULL, (LPBYTE)&apiType, &dataSize) !=
-            ERROR_SUCCESS)
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_API_TYPE_VALUE, NULL, NULL, (LPBYTE)&apiType, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
         {
-            apiType = API_OPENAI;
+            g_APIType = static_cast<APIType>(apiType);
+            g_TypeLoaded = TRUE;
         }
-        g_APIType = static_cast<APIType>(apiType);
 
-        // Load endpoint
-        dataSize = sizeof(g_Endpoint);
-        if (RegQueryValueEx(
-                hKey, REGISTRY_ENDPOINT_VALUE, NULL, NULL, (LPBYTE)g_Endpoint, &dataSize) !=
-            ERROR_SUCCESS)
+        // Load endpoint - Unicode to ASCII conversion needed
+        wchar_t wideEndpoint[256] = { 0 };
+        dataSize = sizeof(wideEndpoint);
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_ENDPOINT_VALUE, NULL, NULL, (LPBYTE)wideEndpoint, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
+        {
+            // Convert wide string to ASCII
+            WideCharToMultiByte(CP_ACP, 0, wideEndpoint, -1, g_Endpoint, sizeof(g_Endpoint), NULL, NULL);
+            g_EndpointLoaded = TRUE;
+        }
+        else
         {
             g_Endpoint[0] = '\0';
         }
@@ -79,9 +110,10 @@ void SaveSettingsToRegistry()
 {
     HKEY hKey;
     DWORD disposition;
+    DWORD lastError = 0;
 
     // Create the parent path first if needed
-    if (RegCreateKeyEx(HKEY_CURRENT_USER,
+    lastError = RegCreateKeyExW(HKEY_CURRENT_USER,
                        REGISTRY_PARENT_PATH,
                        0,
                        NULL,
@@ -89,36 +121,45 @@ void SaveSettingsToRegistry()
                        KEY_WRITE,
                        NULL,
                        &hKey,
-                       &disposition) == ERROR_SUCCESS)
+                       &disposition);
+    if (lastError == ERROR_SUCCESS)
     {
         RegCloseKey(hKey);
     }
 
     // Create or open the registry key
-    if (RegCreateKeyEx(
-            HKEY_CURRENT_USER, REGISTRY_PATH, 0, NULL, 0, KEY_WRITE, NULL, &hKey, &disposition) ==
-        ERROR_SUCCESS)
+    lastError = RegCreateKeyExW(
+            HKEY_CURRENT_USER, REGISTRY_PATH, 0, NULL, 0, KEY_WRITE, NULL, &hKey, &disposition);
+    if (lastError == ERROR_SUCCESS)
     {
+        // Convert ASCII strings to wide strings for storage
+        wchar_t wideToken[256] = {0};
+        MultiByteToWideChar(CP_ACP, 0, g_OpenAIToken, -1, wideToken, 256);
+
         // Save OpenAI token
-        RegSetValueEx(hKey,
+        lastError = RegSetValueExW(hKey,
                       REGISTRY_TOKEN_VALUE,
                       0,
                       REG_SZ,
-                      (const BYTE*)g_OpenAIToken,
-                      strlen(g_OpenAIToken) + 1);
+                      (const BYTE*)wideToken,
+                      (wcslen(wideToken) + 1) * sizeof(wchar_t));
 
         // Save API type
         DWORD apiType = static_cast<DWORD>(g_APIType);
-        RegSetValueEx(
+        lastError = RegSetValueExW(
             hKey, REGISTRY_API_TYPE_VALUE, 0, REG_DWORD, (const BYTE*)&apiType, sizeof(apiType));
 
+        // Convert endpoint string to wide
+        wchar_t wideEndpoint[256] = {0};
+        MultiByteToWideChar(CP_ACP, 0, g_Endpoint, -1, wideEndpoint, 256);
+
         // Save endpoint
-        RegSetValueEx(hKey,
+        lastError = RegSetValueExW(hKey,
                       REGISTRY_ENDPOINT_VALUE,
                       0,
                       REG_SZ,
-                      (const BYTE*)g_Endpoint,
-                      strlen(g_Endpoint) + 1);
+                      (const BYTE*)wideEndpoint,
+                      (wcslen(wideEndpoint) + 1) * sizeof(wchar_t));
 
         RegCloseKey(hKey);
     }
@@ -130,10 +171,20 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
     switch (message)
     {
     case WM_INITDIALOG:
+    {
         // Load settings from the registry and set them in the dialog
         LoadSettingsFromRegistry();
-        SetDlgItemText(hDlg, IDC_OPENAI_TOKEN, to_wstring(g_OpenAIToken).c_str());
-        SetDlgItemText(hDlg, IDC_ENDPOINT, to_wstring(g_Endpoint).c_str());
+
+        // Use wide string versions for the dialog
+        wchar_t wideToken[256] = {0};
+        wchar_t wideEndpoint[256] = {0};
+
+        // Convert from ASCII to wide strings
+        MultiByteToWideChar(CP_ACP, 0, g_OpenAIToken, -1, wideToken, 256);
+        MultiByteToWideChar(CP_ACP, 0, g_Endpoint, -1, wideEndpoint, 256);
+
+        SetDlgItemTextW(hDlg, IDC_OPENAI_TOKEN, wideToken);
+        SetDlgItemTextW(hDlg, IDC_ENDPOINT, wideEndpoint);
 
         // Set radio button based on the saved API type
         CheckRadioButton(hDlg,
@@ -141,42 +192,61 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
                          IDC_RADIO_CUSTOM,
                          g_APIType == API_OPENAI ? IDC_RADIO_OPENAI : IDC_RADIO_CUSTOM);
         return TRUE;
+    }
 
     case WM_COMMAND:
         switch (LOWORD(wParam))
         {
         case IDOK:  // OK Button pressed
-            // Get the entered OpenAI token and endpoint
-            GetDlgItemTextA(hDlg, IDC_OPENAI_TOKEN, g_OpenAIToken, sizeof(g_OpenAIToken));
-            GetDlgItemTextA(hDlg, IDC_ENDPOINT, g_Endpoint, sizeof(g_Endpoint));
+            {
+                // Get the entered OpenAI token and endpoint using wide character functions
+                wchar_t wideToken[256] = {0};
+                wchar_t wideEndpoint[256] = {0};
 
-            // Get the selected API type
-            g_APIType = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED) ? API_OPENAI
-                                                                                    : API_CUSTOM;
+                GetDlgItemTextW(hDlg, IDC_OPENAI_TOKEN, wideToken, 256);
+                GetDlgItemTextW(hDlg, IDC_ENDPOINT, wideEndpoint, 256);
 
-            // Save settings to the registry
-            SaveSettingsToRegistry();
+                // Convert wide to ASCII for our global variables
+                WideCharToMultiByte(CP_ACP, 0, wideToken, -1, g_OpenAIToken, sizeof(g_OpenAIToken), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, wideEndpoint, -1, g_Endpoint, sizeof(g_Endpoint), NULL, NULL);
 
-            EndDialog(hDlg, IDOK);
-            return TRUE;
+                // Get the selected API type
+                g_APIType = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED) ? API_OPENAI
+                                                                                        : API_CUSTOM;
+
+                // Save settings to the registry
+                SaveSettingsToRegistry();
+
+                EndDialog(hDlg, IDOK);
+                return TRUE;
+            }
 
         case IDCANCEL:  // Cancel Button pressed
             EndDialog(hDlg, IDCANCEL);
             return TRUE;
 
         case IDAPPLY:  // Apply Button pressed
-            // Get the entered OpenAI token and endpoint
-            GetDlgItemTextA(hDlg, IDC_OPENAI_TOKEN, g_OpenAIToken, sizeof(g_OpenAIToken));
-            GetDlgItemTextA(hDlg, IDC_ENDPOINT, g_Endpoint, sizeof(g_Endpoint));
+            {
+                // Get the entered OpenAI token and endpoint using wide character functions
+                wchar_t wideToken[256] = {0};
+                wchar_t wideEndpoint[256] = {0};
 
-            // Get the selected API type
-            g_APIType = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED) ? API_OPENAI
-                                                                                    : API_CUSTOM;
+                GetDlgItemTextW(hDlg, IDC_OPENAI_TOKEN, wideToken, 256);
+                GetDlgItemTextW(hDlg, IDC_ENDPOINT, wideEndpoint, 256);
 
-            // Save settings to the registry without closing the dialog
-            SaveSettingsToRegistry();
-            MessageBox(hDlg, L"Changes Applied", L"Info", MB_OK | MB_ICONINFORMATION);
-            return TRUE;
+                // Convert wide to ASCII for our global variables
+                WideCharToMultiByte(CP_ACP, 0, wideToken, -1, g_OpenAIToken, sizeof(g_OpenAIToken), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, wideEndpoint, -1, g_Endpoint, sizeof(g_Endpoint), NULL, NULL);
+
+                // Get the selected API type
+                g_APIType = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED) ? API_OPENAI
+                                                                                        : API_CUSTOM;
+
+                // Save settings to the registry without closing the dialog
+                SaveSettingsToRegistry();
+                MessageBoxW(hDlg, L"Changes Applied", L"Info", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+            }
         }
     }
     return FALSE;
