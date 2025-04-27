@@ -48,6 +48,31 @@ constexpr int WM_TRAYICON = WM_USER + 2;
 #pragma comment(lib, "libcurl")
 #endif
 
+struct Mp3Segment
+{
+    std::vector<char> data;
+};
+
+struct Mp3SegmentRing
+{
+    static constexpr int NUM_ELTS = 5;
+
+    std::array<Mp3Segment, NUM_ELTS> segments;
+
+    volatile int last_written = -1;
+
+    HANDLE newEntryEvent; // Producers signal this, consumers ack
+
+    Mp3SegmentRing()
+    {
+        newEntryEvent = CreateEvent(
+            NULL, // security
+            TRUE, // manual reset
+            FALSE, // initial state
+            NULL); // no name
+    };
+};
+
 
 LPDIRECTSOUND8 lpds;
 LPDIRECTSOUNDCAPTURE8 lpdsCapture;
@@ -55,7 +80,10 @@ LPDIRECTSOUNDCAPTUREBUFFER lpdsCaptureBuffer = NULL;
 bool isRecording = false;
 DWORD bufferSize = BUFFER_SIZE;
 
-std::optional<std::vector<char>> mp3_data{};
+Mp3SegmentRing mp3_segments;
+
+// Signaled when we're done with everything
+HANDLE terminationEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
 lame_t lame;
 HWND hwndDialog;
@@ -68,7 +96,6 @@ std::string the_results;
 
 // This is the actual return value.
 std::optional<std::string> returned_text;
-HANDLE hResultsReadyEvent;
 
 constexpr int HKID_START_OR_STOP = 1;
 
@@ -84,7 +111,7 @@ size_t CurlWriteToStringCallback(void* contents, size_t size, size_t nmemb, std:
 }
 
 // Runs on a background thread; sends the mp3 file to Whisper, and waits for the results.
-void SendToWhisper()
+void SendToWhisper(const Mp3Segment& segment)
 {
     CURL* curl = curl_easy_init();
 
@@ -104,7 +131,7 @@ void SendToWhisper()
     // Add the file part
     curl_mimepart* part = curl_mime_addpart(mime);
     curl_mime_name(part, "file");
-    curl_mime_data(part, mp3_data.value().data(), mp3_data.value().size());
+    curl_mime_data(part, segment.data.data(), segment.data.size());
     curl_mime_type(part, "application/octet-stream");
 
     // For some reason, otherwise we would think that it's a string
@@ -167,7 +194,6 @@ void SendToWhisper()
     the_results = response;
 
     nlohmann::json results_obj = nlohmann::json::parse(the_results);
-
     if (results_obj.contains("text"))
     {
         returned_text = results_obj["text"];
@@ -183,15 +209,37 @@ void SendToWhisper()
 
 unsigned int __stdcall SendToWhisperWorker(void* hwnd)
 {
-    SendToWhisper();
+    int last_consumed = -1;
+
+    // complete yolo, no locking, we just fill the ring and hope we don't wrap over
+    HANDLE handles[] { terminationEvent, mp3_segments.newEntryEvent };
+
+    do {
+        DWORD result = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+        if (result == WAIT_OBJECT_0) // termination
+        {
+            break;
+        }
+
+        if (result == WAIT_OBJECT_0 + 1)
+        {
+            ResetEvent(mp3_segments.newEntryEvent);
+
+            // Catch up with all newly written ones
+            while (mp3_segments.last_written > last_consumed)
+            {
+                const Mp3Segment& segment = mp3_segments.segments[(++last_consumed) % Mp3SegmentRing::NUM_ELTS];
+                SendToWhisper(segment);
+            }
+        }
+    } while (true);
+
     _endthreadex(0);
     return 0;
 }
 
 void SendToWhisperAsync()
 {
-    // FIXME(ssafar): are we leaking the thread handle here?
-    _beginthreadex(NULL, 0, &SendToWhisperWorker, hwndDialog, 0, NULL);
 }
 
 // Takes the contents of the captured buffer and encodes the results into an mp3 file on disk.
@@ -289,7 +337,6 @@ void OnRecordOrStop(HWND hwnd)
     {
         StopRecording();
         SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Record [F8]");
-        SendToWhisperAsync();
     }
     isRecording = !isRecording;
 }
@@ -457,15 +504,21 @@ void StopRecording()
             SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), L"there were issues.");
         }
 
-        mp3_data = std::move(EncodeToMP3(lpdsCaptureBuffer, BUFFER_SIZE));
+        // Reserve a new segment
+        int segment_id = mp3_segments.last_written + 1;
+        Mp3Segment& segment = mp3_segments.segments[segment_id % Mp3SegmentRing::NUM_ELTS];
+
+        // Fill it
+        segment.data = std::move(EncodeToMP3(lpdsCaptureBuffer, BUFFER_SIZE));
+
+        // Release it
+        mp3_segments.last_written += 1;
+        SetEvent(mp3_segments.newEntryEvent);
 
         lpdsCaptureBuffer->Release();
         lpdsCaptureBuffer = NULL;
     }
 }
-
-;
-
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
@@ -479,16 +532,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // A global hotkey so that we can use it even if we are in the background.
     RegisterHotKey(NULL, HKID_START_OR_STOP, MOD_NOREPEAT, VK_F8);
 
-    hResultsReadyEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-
-    if (hResultsReadyEvent == NULL)
-    {
-        std::cerr << "CreateEvent failed (" << GetLastError() << ")" << std::endl;
-        return 1;
-    }
-
     // We need an explicit message pump to be able to process the global hotkey messages.
     HWND hwndDialog = CreateDialog(hInstance, MAKEINTRESOURCE(IDD_RECORDER), NULL, DialogProc);
+
+    // FIXME(ssafar): are we leaking the thread handle here?
+    _beginthreadex(NULL, 0, &SendToWhisperWorker, hwndDialog, 0, NULL);
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))
@@ -508,7 +556,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     UnregisterHotKey(NULL, HKID_START_OR_STOP);
-    CloseHandle(hResultsReadyEvent);
+
+    // Stop all the threads
+    SetEvent(terminationEvent);
 
     NOTIFYICONDATA nid = {0};
     nid.cbSize = sizeof(NOTIFYICONDATA);
