@@ -18,3 +18,4 @@ void LoadSettingsFromRegistry();
 char* GetOpenAIToken();
 char* GetCustomEndpoint();
 APIType GetAPIType();
+char* GetPromptText();

@@ -49,6 +49,8 @@ FONT 9, "MS Shell Dlg"
     AUTORADIOBUTTON "Custom server", IDC_RADIO_CUSTOM, 9, 36, 58, 10, WS_TABSTOP
     LTEXT "Endpoint:", -1, 19, 49, 58, 10
     EDITTEXT IDC_ENDPOINT, 84, 46, 206, 13, ES_AUTOHSCROLL
+    LTEXT "Prompt:", -1, 19, 69, 58, 10
+    EDITTEXT IDC_PROMPT, 84, 66, 206, 13, ES_AUTOHSCROLL
 }
 
 //////////////////////////////////////////////////////////////////////////////

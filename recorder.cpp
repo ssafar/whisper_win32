@@ -1,5 +1,3 @@
-
-
 // for sprintf etc.
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -140,6 +138,14 @@ void SendToWhisper(const Mp3Segment& segment)
     curl_mimepart* part2 = curl_mime_addpart(mime);
     curl_mime_name(part2, "model");
     curl_mime_data(part2, "whisper-1", CURL_ZERO_TERMINATED);
+
+    // Only add prompt if it's not empty
+    const char* prompt = GetPromptText();
+    if (prompt && prompt[0] != '\0') {
+        curl_mimepart* part3 = curl_mime_addpart(mime);
+        curl_mime_name(part3, "prompt");
+        curl_mime_data(part3, prompt, CURL_ZERO_TERMINATED);
+    }
 
     // Add the headers
     struct curl_slist* headerlist = NULL;
