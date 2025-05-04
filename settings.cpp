@@ -199,6 +199,18 @@ void SaveSettingsToRegistry()
     }
 }
 
+// Function to update control states based on selected API type
+void UpdateControlStates(HWND hDlg)
+{
+    BOOL isOpenAI = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED);
+    
+    // Enable/disable token field based on OpenAI selection
+    EnableWindow(GetDlgItem(hDlg, IDC_OPENAI_TOKEN), isOpenAI);
+    
+    // Enable/disable endpoint field based on Custom server selection
+    EnableWindow(GetDlgItem(hDlg, IDC_ENDPOINT), !isOpenAI);
+}
+
 // Dialog procedure to handle messages
 INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -228,12 +240,21 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
                          IDC_RADIO_OPENAI,
                          IDC_RADIO_CUSTOM,
                          g_APIType == API_OPENAI ? IDC_RADIO_OPENAI : IDC_RADIO_CUSTOM);
+        
+        // Initialize control states
+        UpdateControlStates(hDlg);
         return TRUE;
     }
 
     case WM_COMMAND:
         switch (LOWORD(wParam))
         {
+        case IDC_RADIO_OPENAI:
+        case IDC_RADIO_CUSTOM:
+            // Update control states when radio buttons change
+            UpdateControlStates(hDlg);
+            break;
+            
         case IDOK:  // OK Button pressed
             {
                 // Get the entered OpenAI token and endpoint using wide character functions
