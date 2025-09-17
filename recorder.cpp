@@ -20,7 +20,7 @@
 #include <iostream>
 #include <optional>
 
-#define BUFFER_SIZE 44100 * 2 * 120  // 120 seconds of 44100 Hz, 16-bit mono audio
+#define BUFFER_SIZE 44100 * 2 * 1220  // a lot of seconds of 44100 Hz, 16-bit mono audio
 
 constexpr int WM_REQUEST_DONE = WM_USER + 1;
 constexpr int WM_TRAYICON = WM_USER + 2;
