@@ -49,6 +49,7 @@ constexpr int WM_TRAYICON = WM_USER + 2;
 struct Mp3Segment
 {
     std::vector<char> data;
+    double audio_duration_seconds = 0.0;
 };
 
 struct Mp3SegmentRing
@@ -94,6 +95,10 @@ std::string the_results;
 
 // This is the actual return value.
 std::optional<std::string> returned_text;
+
+// Stats for the last request
+double last_audio_duration_seconds = 0.0;
+double last_request_time_seconds = 0.0;
 
 constexpr int HKID_START_OR_STOP = 1;
 
@@ -175,8 +180,11 @@ void SendToWhisper(const Mp3Segment& segment)
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteToStringCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
-    // Perform the file upload
+    // Perform the file upload with timing
+    ULONGLONG start_time = GetTickCount64();
     CURLcode res = curl_easy_perform(curl);
+    ULONGLONG end_time = GetTickCount64();
+    last_request_time_seconds = (end_time - start_time) / 1000.0;
 
     // Check for errors
     if (res != CURLE_OK)
@@ -209,6 +217,9 @@ void SendToWhisper(const Mp3Segment& segment)
     {
         returned_text = std::nullopt;
     }
+
+    // Set stats from segment (so they're coherent with this request)
+    last_audio_duration_seconds = segment.audio_duration_seconds;
 
     PostMessage(hwndDialog, WM_REQUEST_DONE, 0, 0);
 }
@@ -303,6 +314,15 @@ void ProcessResultsJson()
         // Just paste the entire thing
         SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), to_wstring(std::string{ the_results }).c_str());
     }
+
+    // Update stats label
+    wchar_t stats_buffer[128];
+    double ratio = (last_audio_duration_seconds > 0)
+        ? last_request_time_seconds / last_audio_duration_seconds
+        : 0.0;
+    swprintf(stats_buffer, 128, L"%.1fs audio \u2192 %.1fs processing (%.2fx realtime)",
+             last_audio_duration_seconds, last_request_time_seconds, ratio);
+    SetWindowText(GetDlgItem(hwndDialog, IDC_STATS), stats_buffer);
 }
 
 // Mostly for reading from the Emacs eval text box.
@@ -495,18 +515,18 @@ void StopRecording()
         DWORD dwCapturePosition, dwReadPosition;
         HRESULT hr = lpdsCaptureBuffer->GetCurrentPosition(&dwCapturePosition, &dwReadPosition);
 
+        // Calculate audio duration: bytes / (sample_rate * channels * bytes_per_sample)
+        // 44100 Hz, mono, 16-bit = 88200 bytes per second
+        double audio_duration = SUCCEEDED(hr) ? dwCapturePosition / 88200.0 : 0.0;
+
         if (SUCCEEDED(hr))
         {
-            // Now dwCapturePosition and dwReadPosition hold the current positions
-            // You can use these values as needed in your application
-
             wchar_t buffer[64];
             wsprintf(buffer, L"%lu bytes recorded", dwCapturePosition);
             SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), buffer);
         }
         else
         {
-            // Handle error
             SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), L"there were issues.");
         }
 
@@ -516,6 +536,7 @@ void StopRecording()
 
         // Fill it
         segment.data = std::move(EncodeToMP3(lpdsCaptureBuffer, BUFFER_SIZE));
+        segment.audio_duration_seconds = audio_duration;
 
         // Release it
         mp3_segments.last_written += 1;

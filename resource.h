@@ -15,6 +15,7 @@
 #define IDC_RADIO_CUSTOM                    109
 #define IDC_ENDPOINT                        110
 #define IDC_PROMPT                          111
+#define IDC_STATS                           112
 
 #define IDD_RECORDER                        100
 #define IDD_SETTINGS                        101
