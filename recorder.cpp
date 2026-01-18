@@ -86,6 +86,9 @@ HANDLE terminationEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
 lame_t lame;
 HWND hwndDialog;
+HWND hwndToggle = NULL;
+HWND hwndToggleButton = NULL;
+HINSTANCE g_hInstance = NULL;
 
 // For the COM API
 constexpr int PROCESSING_TIME_TIMEOUT_MS = 15000;
@@ -105,6 +108,9 @@ constexpr int HKID_START_OR_STOP = 1;
 BOOL InitDirectSound(HWND hWnd);
 void StartRecording();
 void StopRecording();
+void UpdateRecordButtonText();
+void ShowToggleWindow(bool show);
+LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 size_t CurlWriteToStringCallback(void* contents, size_t size, size_t nmemb, std::string* s)
 {
@@ -345,6 +351,90 @@ void DoEmacsEval(HWND hwnd)
     InvokeEmacs(info, to_string(emacs_command));
 }
 
+void UpdateToggleButtonLayout(HWND hwnd)
+{
+    if (!hwndToggleButton)
+    {
+        return;
+    }
+
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+
+    const int padding = 6;
+    MoveWindow(
+        hwndToggleButton,
+        padding,
+        padding,
+        (rc.right - rc.left) - (padding * 2),
+        (rc.bottom - rc.top) - (padding * 2),
+        TRUE);
+}
+
+HWND CreateToggleWindow()
+{
+    static bool class_registered = false;
+    if (!class_registered)
+    {
+        WNDCLASSEX wc = {};
+        wc.cbSize = sizeof(WNDCLASSEX);
+        wc.lpfnWndProc = ToggleWndProc;
+        wc.hInstance = g_hInstance;
+        wc.lpszClassName = L"WhisperToggleWindow";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        RegisterClassEx(&wc);
+        class_registered = true;
+    }
+
+    HWND hwnd = CreateWindowEx(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"WhisperToggleWindow",
+        L"Whisper Toggle",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        10,
+        10,
+        220,
+        220,
+        hwndDialog,
+        NULL,
+        g_hInstance,
+        NULL);
+
+    return hwnd;
+}
+
+void ShowToggleWindow(bool show)
+{
+    if (show)
+    {
+        if (!hwndToggle)
+        {
+            hwndToggle = CreateToggleWindow();
+        }
+
+        ShowWindow(hwndToggle, SW_SHOW);
+        SetWindowPos(hwndToggle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+    else if (hwndToggle)
+    {
+        ShowWindow(hwndToggle, SW_HIDE);
+    }
+}
+
+void UpdateRecordButtonText()
+{
+    const wchar_t* label = isRecording ? L"Stop [F8]" : L"Record [F8]";
+    if (hwndDialog)
+    {
+        SetWindowText(GetDlgItem(hwndDialog, IDC_RECORD), label);
+    }
+    if (hwndToggleButton)
+    {
+        SetWindowText(hwndToggleButton, label);
+    }
+}
+
 void OnRecordOrStop(HWND hwnd)
 {
     // Use the same global hotkey for some test text injection
@@ -357,14 +447,13 @@ void OnRecordOrStop(HWND hwnd)
     if (!isRecording)
     {
         StartRecording();
-        SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Stop [F8]");
     }
     else
     {
         StopRecording();
-        SetWindowText(GetDlgItem(hwnd, IDC_RECORD), L"Record [F8]");
     }
     isRecording = !isRecording;
+    UpdateRecordButtonText();
 }
 
 void SetupIconsAndTray(HWND hwnd)
@@ -385,6 +474,50 @@ void SetupIconsAndTray(HWND hwnd)
     Shell_NotifyIcon(NIM_ADD, &nid);
 }
 
+LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_CREATE:
+        hwndToggleButton = CreateWindowEx(
+            0,
+            L"BUTTON",
+            L"",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            (HMENU)IDC_TOGGLE_RECORD,
+            g_hInstance,
+            NULL);
+        UpdateToggleButtonLayout(hwnd);
+        UpdateRecordButtonText();
+        return 0;
+    case WM_SIZE:
+        UpdateToggleButtonLayout(hwnd);
+        return 0;
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDC_TOGGLE_RECORD && HIWORD(wParam) == BN_CLICKED)
+        {
+            OnRecordOrStop(hwndDialog);
+            return 0;
+        }
+        break;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_CLOSE:
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    case WM_DESTROY:
+        hwndToggleButton = NULL;
+        hwndToggle = NULL;
+        return 0;
+    }
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
 INT_PTR CALLBACK DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg)
@@ -400,12 +533,16 @@ INT_PTR CALLBACK DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             return FALSE;
         }
         hwndDialog = hwnd;
+        SendMessage(GetDlgItem(hwnd, IDC_SHOW_TOGGLE), BM_SETCHECK, BST_UNCHECKED, 0);
         return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wParam))
         {
         case IDC_RECORD:
             OnRecordOrStop(hwnd);
+            break;
+        case IDC_SHOW_TOGGLE:
+            ShowToggleWindow(IsDlgButtonChecked(hwnd, IDC_SHOW_TOGGLE) == BST_CHECKED);
             break;
         case IDC_SEND_TO_WHISPER:
             SendToWhisperAsync();
@@ -417,6 +554,10 @@ INT_PTR CALLBACK DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             if (isRecording)
             {
                 StopRecording();
+            }
+            if (hwndToggle)
+            {
+                DestroyWindow(hwndToggle);
             }
             DestroyWindow(hwnd);
             std::cout << "ending dialog" << std::endl;
@@ -553,6 +694,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
     icex.dwICC = ICC_WIN95_CLASSES;
     InitCommonControlsEx(&icex);
+
+    g_hInstance = hInstance;
 
     LoadSettingsFromRegistry();
 

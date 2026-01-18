@@ -33,6 +33,7 @@ FONT 9, "MS Shell Dlg"
     EDITTEXT IDC_EMACS_COMMAND_EDIT, 17, 71, 167, 15
     AUTOCHECKBOX "Use test text instead", IDC_USE_TEST_TEXT, 13, 53, 75, 14
     PUSHBUTTON "Settings...", IDC_SETTINGS, 11, 92, 60, 14
+    AUTOCHECKBOX "Show toggle window", IDC_SHOW_TOGGLE, 78, 92, 90, 14
     LTEXT "", IDC_STATS, 11, 110, 240, 10
 }
 

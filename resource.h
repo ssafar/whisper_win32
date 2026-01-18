@@ -16,6 +16,8 @@
 #define IDC_ENDPOINT                        110
 #define IDC_PROMPT                          111
 #define IDC_STATS                           112
+#define IDC_SHOW_TOGGLE                    113
+#define IDC_TOGGLE_RECORD                  114
 
 #define IDD_RECORDER                        100
 #define IDD_SETTINGS                        101
