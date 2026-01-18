@@ -110,6 +110,7 @@ double last_request_time_seconds = 0.0;
 double last_postprocess_time_seconds = 0.0;
 std::string last_raw_text;
 std::string last_processed_text;
+std::string last_reasoning_text;
 
 constexpr int HKID_START_OR_STOP = 1;
 
@@ -145,10 +146,14 @@ std::string TrimString(const std::string& input)
     return input.substr(start, end - start);
 }
 
-std::string ExtractPostProcessOutput(const std::string& response)
+std::string ExtractTagContent(const std::string& response, const std::string& tag)
 {
-    const std::string start_tag = "<output>";
-    const std::string end_tag = "</output>";
+    std::string start_tag = "<";
+    start_tag += tag;
+    start_tag += ">";
+    std::string end_tag = "</";
+    end_tag += tag;
+    end_tag += ">";
     size_t start_pos = response.find(start_tag);
     size_t end_pos = response.find(end_tag);
     if (start_pos == std::string::npos || end_pos == std::string::npos || end_pos <= start_pos)
@@ -158,6 +163,16 @@ std::string ExtractPostProcessOutput(const std::string& response)
 
     start_pos += start_tag.size();
     return TrimString(response.substr(start_pos, end_pos - start_pos));
+}
+
+std::string ExtractPostProcessOutput(const std::string& response)
+{
+    return ExtractTagContent(response, "output");
+}
+
+std::string ExtractPostProcessReasoning(const std::string& response)
+{
+    return ExtractTagContent(response, "explanation");
 }
 
 std::string BuildPostProcessPrompt(const std::string& prompt_template, const std::string& transcript)
@@ -185,11 +200,15 @@ std::string BuildPostProcessPrompt(const std::string& prompt_template, const std
     return prompt;
 }
 
-bool PostProcessTranscript(const std::string& transcript, std::string* processed_text, std::string* debug_text, std::string* error_message, double* elapsed_seconds)
+bool PostProcessTranscript(const std::string& transcript, std::string* processed_text, std::string* reasoning_text, std::string* debug_text, std::string* error_message, double* elapsed_seconds)
 {
     if (processed_text)
     {
         processed_text->clear();
+    }
+    if (reasoning_text)
+    {
+        reasoning_text->clear();
     }
     if (debug_text)
     {
@@ -295,6 +314,7 @@ bool PostProcessTranscript(const std::string& transcript, std::string* processed
 
         std::string raw_output = response_obj["response"];
         std::string extracted = ExtractPostProcessOutput(raw_output);
+        std::string reasoning = ExtractPostProcessReasoning(raw_output);
         if (extracted.empty())
         {
             if (error_message)
@@ -311,6 +331,10 @@ bool PostProcessTranscript(const std::string& transcript, std::string* processed
         if (processed_text)
         {
             *processed_text = extracted;
+        }
+        if (reasoning_text)
+        {
+            *reasoning_text = reasoning;
         }
         return true;
     }
@@ -443,18 +467,21 @@ void SendToWhisper(const Mp3Segment& segment)
     last_raw_text = raw_text;
     PostMessage(hwndDialog, WM_RAW_READY, 0, 0);
     last_processed_text.clear();
+    last_reasoning_text.clear();
     last_postprocess_time_seconds = 0.0;
 
     std::string inject_text = raw_text;
     if (GetPostProcessEnabled())
     {
         std::string processed_text;
+        std::string reasoning_text;
         std::string debug_text;
         std::string error_message;
         double postprocess_elapsed = 0.0;
-        if (PostProcessTranscript(raw_text, &processed_text, &debug_text, &error_message, &postprocess_elapsed))
+        if (PostProcessTranscript(raw_text, &processed_text, &reasoning_text, &debug_text, &error_message, &postprocess_elapsed))
         {
             last_processed_text = processed_text;
+            last_reasoning_text = reasoning_text;
             last_postprocess_time_seconds = postprocess_elapsed;
             inject_text = processed_text;
         }
@@ -564,14 +591,15 @@ void ProcessResultsJson()
     std::string raw_text = last_raw_text.empty() ? the_results : last_raw_text;
     SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), to_wstring(raw_text).c_str());
     SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES_PROCESSED), to_wstring(last_processed_text).c_str());
+    SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES_REASONING), to_wstring(last_reasoning_text).c_str());
 
     // Update stats label
     wchar_t stats_buffer[128];
-    double whisper_ratio = (last_audio_duration_seconds > 0)
-        ? last_request_time_seconds / last_audio_duration_seconds
+    double whisper_ratio = (last_request_time_seconds > 0)
+        ? last_audio_duration_seconds / last_request_time_seconds
         : 0.0;
-    double post_ratio = (last_audio_duration_seconds > 0)
-        ? last_postprocess_time_seconds / last_audio_duration_seconds
+    double post_ratio = (last_postprocess_time_seconds > 0)
+        ? last_audio_duration_seconds / last_postprocess_time_seconds
         : 0.0;
     swprintf(stats_buffer, 128, L"%.1fs audio -> %.1fs whisper (%.2fx realtime), %.1fs post (%.2fx realtime)",
              last_audio_duration_seconds, last_request_time_seconds, whisper_ratio,
