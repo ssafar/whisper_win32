@@ -156,6 +156,9 @@
     <Midl>
       <TypeLibraryName>$(IntDirFullPath)$(ProjectName).tlb</TypeLibraryName>
     </Midl>
+    <PostBuildEvent>
+      <Command>if exist "$(ProjectDir)update.ps1" copy /Y "$(ProjectDir)update.ps1" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="emacs.cpp" />
