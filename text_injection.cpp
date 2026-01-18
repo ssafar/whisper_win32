@@ -6,7 +6,7 @@
 
 #include "emacs.hpp"
 
-void InjectTextViaClipboard(const std::string& text, HWND hWnd)
+bool SetClipboardText(const std::string& text)
 {
     // Convert the UTF-8 string to a wide string
     int size_needed = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), NULL, 0);
@@ -16,7 +16,7 @@ void InjectTextViaClipboard(const std::string& text, HWND hWnd)
     // Open the clipboard
     if (!OpenClipboard(NULL))
     {
-        return;  // If we can't open the clipboard, exit the function
+        return false;  // If we can't open the clipboard, exit the function
     }
 
     // Empty the clipboard
@@ -27,7 +27,7 @@ void InjectTextViaClipboard(const std::string& text, HWND hWnd)
     if (!hMem)
     {
         CloseClipboard();
-        return;
+        return false;
     }
 
     // Copy the text to the global memory
@@ -39,6 +39,16 @@ void InjectTextViaClipboard(const std::string& text, HWND hWnd)
 
     // Close the clipboard
     CloseClipboard();
+
+    return true;
+}
+
+void InjectTextViaClipboard(const std::string& text, HWND hWnd)
+{
+    if (!SetClipboardText(text))
+    {
+        return;
+    }
 
     // Bring the target window to the foreground
     SetForegroundWindow(hWnd);
@@ -61,6 +71,29 @@ void InjectTextViaClipboard(const std::string& text, HWND hWnd)
 
     // Send the input to the system
     SendInput(4, inputs, sizeof(INPUT));
+}
+
+void InjectTextViaConsoleRightClick(const std::string& text, HWND hWnd)
+{
+    if (!SetClipboardText(text))
+    {
+        return;
+    }
+
+    SetForegroundWindow(hWnd);
+
+    RECT rc;
+    if (!GetClientRect(hWnd, &rc))
+    {
+        return;
+    }
+
+    const int x = (rc.left + rc.right) / 2;
+    const int y = (rc.top + rc.bottom) / 2;
+    const LPARAM click_pos = MAKELPARAM(x, y);
+
+    PostMessage(hWnd, WM_RBUTTONDOWN, MK_RBUTTON, click_pos);
+    PostMessage(hWnd, WM_RBUTTONUP, 0, click_pos);
 }
 
 void InjectTextToTarget(const std::string& text)
@@ -86,6 +119,10 @@ void InjectTextToTarget(const std::string& text)
     if (classNameString == L"Emacs")
     {
         InjectTextToEmacs(text);
+    }
+    else if (classNameString == L"ConsoleWindowClass")
+    {
+        InjectTextViaConsoleRightClick(text, hwndForeground);
     }
     else
     {
