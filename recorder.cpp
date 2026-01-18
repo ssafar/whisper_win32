@@ -87,7 +87,10 @@ HANDLE terminationEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 lame_t lame;
 HWND hwndDialog;
 HWND hwndToggle = NULL;
-HWND hwndToggleButton = NULL;
+HWND hwndToggleRecordButton = NULL;
+HWND hwndToggleSpaceButton = NULL;
+HWND hwndToggleBackspaceButton = NULL;
+HWND hwndToggleNewlineButton = NULL;
 HINSTANCE g_hInstance = NULL;
 
 // For the COM API
@@ -111,6 +114,7 @@ void StopRecording();
 void UpdateRecordButtonText();
 void ShowToggleWindow(bool show);
 LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+void InjectVirtualKeyToTarget(WORD vk);
 
 size_t CurlWriteToStringCallback(void* contents, size_t size, size_t nmemb, std::string* s)
 {
@@ -353,7 +357,7 @@ void DoEmacsEval(HWND hwnd)
 
 void UpdateToggleButtonLayout(HWND hwnd)
 {
-    if (!hwndToggleButton)
+    if (!hwndToggleRecordButton || !hwndToggleSpaceButton || !hwndToggleBackspaceButton || !hwndToggleNewlineButton)
     {
         return;
     }
@@ -362,13 +366,20 @@ void UpdateToggleButtonLayout(HWND hwnd)
     GetClientRect(hwnd, &rc);
 
     const int padding = 6;
-    MoveWindow(
-        hwndToggleButton,
-        padding,
-        padding,
-        (rc.right - rc.left) - (padding * 2),
-        (rc.bottom - rc.top) - (padding * 2),
-        TRUE);
+    const int width = (rc.right - rc.left);
+    const int height = (rc.bottom - rc.top);
+    const int avail_w = width - (padding * 2);
+    const int avail_h = height - (padding * 3);
+    const int record_h = (avail_h * 2) / 3;
+    const int small_h = avail_h - record_h;
+    const int small_w = (avail_w - (padding * 2)) / 3;
+
+    MoveWindow(hwndToggleRecordButton, padding, padding, avail_w, record_h, TRUE);
+
+    const int row_y = padding + record_h + padding;
+    MoveWindow(hwndToggleSpaceButton, padding, row_y, small_w, small_h, TRUE);
+    MoveWindow(hwndToggleBackspaceButton, padding + small_w + padding, row_y, small_w, small_h, TRUE);
+    MoveWindow(hwndToggleNewlineButton, padding + (small_w + padding) * 2, row_y, small_w, small_h, TRUE);
 }
 
 HWND CreateToggleWindow()
@@ -429,10 +440,21 @@ void UpdateRecordButtonText()
     {
         SetWindowText(GetDlgItem(hwndDialog, IDC_RECORD), label);
     }
-    if (hwndToggleButton)
+    if (hwndToggleRecordButton)
     {
-        SetWindowText(hwndToggleButton, label);
+        SetWindowText(hwndToggleRecordButton, label);
     }
+}
+
+void InjectVirtualKeyToTarget(WORD vk)
+{
+    INPUT inputs[2] = {};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = vk;
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = vk;
+    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, inputs, sizeof(INPUT));
 }
 
 void OnRecordOrStop(HWND hwnd)
@@ -479,7 +501,7 @@ LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
     switch (uMsg)
     {
     case WM_CREATE:
-        hwndToggleButton = CreateWindowEx(
+        hwndToggleRecordButton = CreateWindowEx(
             0,
             L"BUTTON",
             L"",
@@ -492,6 +514,45 @@ LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
             (HMENU)IDC_TOGGLE_RECORD,
             g_hInstance,
             NULL);
+        hwndToggleSpaceButton = CreateWindowEx(
+            0,
+            L"BUTTON",
+            L"Space",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            (HMENU)IDC_TOGGLE_SPACE,
+            g_hInstance,
+            NULL);
+        hwndToggleBackspaceButton = CreateWindowEx(
+            0,
+            L"BUTTON",
+            L"<=",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            (HMENU)IDC_TOGGLE_BACKSPACE,
+            g_hInstance,
+            NULL);
+        hwndToggleNewlineButton = CreateWindowEx(
+            0,
+            L"BUTTON",
+            L"Enter",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            (HMENU)IDC_TOGGLE_NEWLINE,
+            g_hInstance,
+            NULL);
         UpdateToggleButtonLayout(hwnd);
         UpdateRecordButtonText();
         return 0;
@@ -499,10 +560,23 @@ LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
         UpdateToggleButtonLayout(hwnd);
         return 0;
     case WM_COMMAND:
-        if (LOWORD(wParam) == IDC_TOGGLE_RECORD && HIWORD(wParam) == BN_CLICKED)
+        if (HIWORD(wParam) == BN_CLICKED)
         {
-            OnRecordOrStop(hwndDialog);
-            return 0;
+            switch (LOWORD(wParam))
+            {
+            case IDC_TOGGLE_RECORD:
+                OnRecordOrStop(hwndDialog);
+                return 0;
+            case IDC_TOGGLE_SPACE:
+                InjectVirtualKeyToTarget(VK_SPACE);
+                return 0;
+            case IDC_TOGGLE_BACKSPACE:
+                InjectVirtualKeyToTarget(VK_BACK);
+                return 0;
+            case IDC_TOGGLE_NEWLINE:
+                InjectVirtualKeyToTarget(VK_RETURN);
+                return 0;
+            }
         }
         break;
     case WM_MOUSEACTIVATE:
@@ -511,7 +585,10 @@ LRESULT CALLBACK ToggleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     case WM_DESTROY:
-        hwndToggleButton = NULL;
+        hwndToggleRecordButton = NULL;
+        hwndToggleSpaceButton = NULL;
+        hwndToggleBackspaceButton = NULL;
+        hwndToggleNewlineButton = NULL;
         hwndToggle = NULL;
         return 0;
     }

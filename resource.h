@@ -18,6 +18,9 @@
 #define IDC_STATS                           112
 #define IDC_SHOW_TOGGLE                    113
 #define IDC_TOGGLE_RECORD                  114
+#define IDC_TOGGLE_SPACE                   115
+#define IDC_TOGGLE_BACKSPACE               116
+#define IDC_TOGGLE_NEWLINE                 117
 
 #define IDD_RECORDER                        100
 #define IDD_SETTINGS                        101
