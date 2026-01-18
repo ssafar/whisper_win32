@@ -16,12 +16,20 @@
 #define REGISTRY_API_TYPE_VALUE L"api_type"
 #define REGISTRY_ENDPOINT_VALUE L"endpoint"
 #define REGISTRY_PROMPT_VALUE L"prompt"
+#define REGISTRY_POSTPROCESS_ENABLED_VALUE L"postprocess_enabled"
+#define REGISTRY_POSTPROCESS_ENDPOINT_VALUE L"postprocess_endpoint"
+#define REGISTRY_POSTPROCESS_MODEL_VALUE L"postprocess_model"
+#define REGISTRY_POSTPROCESS_PROMPT_VALUE L"postprocess_prompt"
 
 // Global variables to hold settings
 char g_OpenAIToken[256] = { 0 };
 char g_Endpoint[256] = { 0 };
 char g_PromptText[1024] = { 0 };
 APIType g_APIType = API_OPENAI;
+bool g_PostProcessEnabled = false;
+char g_PostProcessEndpoint[256] = { 0 };
+char g_PostProcessModel[128] = { 0 };
+char g_PostProcessPrompt[4096] = { 0 };
 
 // Add debugging variables
 DWORD g_LastRegError = 0;
@@ -35,6 +43,34 @@ char* GetOpenAIToken() { return g_OpenAIToken; }
 char* GetCustomEndpoint() { return g_Endpoint; }
 APIType GetAPIType() { return g_APIType; }
 char* GetPromptText() { return g_PromptText; }
+bool GetPostProcessEnabled() { return g_PostProcessEnabled; }
+char* GetPostProcessEndpoint() { return g_PostProcessEndpoint; }
+char* GetPostProcessModel() { return g_PostProcessModel; }
+char* GetPostProcessPrompt() { return g_PostProcessPrompt; }
+void SetPostProcessEnabled(bool enabled) { g_PostProcessEnabled = enabled; }
+
+static const char kDefaultPostProcessEndpoint[] = "http://inference.ltn.simonsafar.com/api/generate";
+static const char kDefaultPostProcessModel[] = "zephyr:latest";
+static const char kDefaultPostProcessPrompt[] =
+    "<instructions>You are a post-processor for speech-to-text transcriptions. The user speaks words out loud, which are transcribed by a speech-to-text service. Your job is to convert the transcribed spoken words into properly formatted written text.\n"
+    "\n"
+    "When users dictate URLs, email addresses, or other formatted text, they speak the punctuation and formatting characters as words (like \"dot\", \"slash\", \"at\", \"colon\"). You need to convert these spoken words into the actual punctuation marks.</instructions>\n"
+    "\n"
+    "<examples>\n"
+    "<example>\n"
+    "<input>http colon slash slash example dot com</input>\n"
+    "<explanation>The user is speaking a URL. Converting spoken punctuation: \"colon\" becomes \":\", \"slash slash\" becomes \"//\", and \"dot\" becomes \".\"</explanation>\n"
+    "<output>http://example.com</output>\n"
+    "</example>\n"
+    "\n"
+    "<example>\n"
+    "<input>visit w w w dot github dot com</input>\n"
+    "<explanation>The user is speaking a website address. The \"w w w\" represents the three letters without spaces, and \"dot\" becomes \".\" for proper domain formatting.</explanation>\n"
+    "<output>visit www.github.com</output>\n"
+    "</example>\n"
+    "</examples>\n"
+    "\n"
+    "<input>{{transcript}}</input>\n";
 
 // Function to load settings from the registry
 void LoadSettingsFromRegistry()
@@ -49,6 +85,11 @@ void LoadSettingsFromRegistry()
     g_TypeLoaded = FALSE;
     g_EndpointLoaded = FALSE;
     g_PromptLoaded = FALSE;
+
+    g_PostProcessEnabled = false;
+    strncpy_s(g_PostProcessEndpoint, sizeof(g_PostProcessEndpoint), kDefaultPostProcessEndpoint, _TRUNCATE);
+    strncpy_s(g_PostProcessModel, sizeof(g_PostProcessModel), kDefaultPostProcessModel, _TRUNCATE);
+    strncpy_s(g_PostProcessPrompt, sizeof(g_PostProcessPrompt), kDefaultPostProcessPrompt, _TRUNCATE);
 
     // Open the registry key - store error code for debugging
     g_LastRegError = RegOpenKeyExW(HKEY_CURRENT_USER, REGISTRY_PATH, 0, KEY_READ, &hKey);
@@ -113,6 +154,46 @@ void LoadSettingsFromRegistry()
         else
         {
             g_PromptText[0] = '\0';
+        }
+
+        // Load post-process enabled
+        DWORD postProcessEnabled = 0;
+        dataSize = sizeof(postProcessEnabled);
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_POSTPROCESS_ENABLED_VALUE, NULL, NULL, (LPBYTE)&postProcessEnabled, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
+        {
+            g_PostProcessEnabled = (postProcessEnabled != 0);
+        }
+
+        // Load post-process endpoint
+        wchar_t widePostProcessEndpoint[256] = { 0 };
+        dataSize = sizeof(widePostProcessEndpoint);
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_POSTPROCESS_ENDPOINT_VALUE, NULL, NULL, (LPBYTE)widePostProcessEndpoint, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
+        {
+            WideCharToMultiByte(CP_ACP, 0, widePostProcessEndpoint, -1, g_PostProcessEndpoint, sizeof(g_PostProcessEndpoint), NULL, NULL);
+        }
+
+        // Load post-process model
+        wchar_t widePostProcessModel[128] = { 0 };
+        dataSize = sizeof(widePostProcessModel);
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_POSTPROCESS_MODEL_VALUE, NULL, NULL, (LPBYTE)widePostProcessModel, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
+        {
+            WideCharToMultiByte(CP_ACP, 0, widePostProcessModel, -1, g_PostProcessModel, sizeof(g_PostProcessModel), NULL, NULL);
+        }
+
+        // Load post-process prompt
+        wchar_t widePostProcessPrompt[4096] = { 0 };
+        dataSize = sizeof(widePostProcessPrompt);
+        g_LastRegError = RegQueryValueExW(
+            hKey, REGISTRY_POSTPROCESS_PROMPT_VALUE, NULL, NULL, (LPBYTE)widePostProcessPrompt, &dataSize);
+        if (g_LastRegError == ERROR_SUCCESS)
+        {
+            WideCharToMultiByte(CP_ACP, 0, widePostProcessPrompt, -1, g_PostProcessPrompt, sizeof(g_PostProcessPrompt), NULL, NULL);
         }
 
         RegCloseKey(hKey);
@@ -195,6 +276,44 @@ void SaveSettingsToRegistry()
                       (const BYTE*)widePrompt,
                       (wcslen(widePrompt) + 1) * sizeof(wchar_t));
 
+        // Save post-process enabled
+        DWORD postProcessEnabled = g_PostProcessEnabled ? 1 : 0;
+        lastError = RegSetValueExW(
+            hKey, REGISTRY_POSTPROCESS_ENABLED_VALUE, 0, REG_DWORD, (const BYTE*)&postProcessEnabled, sizeof(postProcessEnabled));
+
+        // Convert post-process endpoint to wide
+        wchar_t widePostProcessEndpoint[256] = {0};
+        MultiByteToWideChar(CP_ACP, 0, g_PostProcessEndpoint, -1, widePostProcessEndpoint, 256);
+
+        lastError = RegSetValueExW(hKey,
+                      REGISTRY_POSTPROCESS_ENDPOINT_VALUE,
+                      0,
+                      REG_SZ,
+                      (const BYTE*)widePostProcessEndpoint,
+                      (wcslen(widePostProcessEndpoint) + 1) * sizeof(wchar_t));
+
+        // Convert post-process model to wide
+        wchar_t widePostProcessModel[128] = {0};
+        MultiByteToWideChar(CP_ACP, 0, g_PostProcessModel, -1, widePostProcessModel, 128);
+
+        lastError = RegSetValueExW(hKey,
+                      REGISTRY_POSTPROCESS_MODEL_VALUE,
+                      0,
+                      REG_SZ,
+                      (const BYTE*)widePostProcessModel,
+                      (wcslen(widePostProcessModel) + 1) * sizeof(wchar_t));
+
+        // Convert post-process prompt to wide
+        wchar_t widePostProcessPrompt[4096] = {0};
+        MultiByteToWideChar(CP_ACP, 0, g_PostProcessPrompt, -1, widePostProcessPrompt, 4096);
+
+        lastError = RegSetValueExW(hKey,
+                      REGISTRY_POSTPROCESS_PROMPT_VALUE,
+                      0,
+                      REG_SZ,
+                      (const BYTE*)widePostProcessPrompt,
+                      (wcslen(widePostProcessPrompt) + 1) * sizeof(wchar_t));
+
         RegCloseKey(hKey);
     }
 }
@@ -211,6 +330,7 @@ void UpdateControlStates(HWND hDlg)
     EnableWindow(GetDlgItem(hDlg, IDC_ENDPOINT), !isOpenAI);
 }
 
+
 // Dialog procedure to handle messages
 INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -225,22 +345,31 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
         wchar_t wideToken[256] = {0};
         wchar_t wideEndpoint[256] = {0};
         wchar_t widePrompt[1024] = {0};
+        wchar_t widePostProcessEndpoint[256] = {0};
+        wchar_t widePostProcessModel[128] = {0};
+        wchar_t widePostProcessPrompt[4096] = {0};
 
         // Convert from ASCII to wide strings
         MultiByteToWideChar(CP_ACP, 0, g_OpenAIToken, -1, wideToken, 256);
         MultiByteToWideChar(CP_ACP, 0, g_Endpoint, -1, wideEndpoint, 256);
         MultiByteToWideChar(CP_ACP, 0, g_PromptText, -1, widePrompt, 1024);
+        MultiByteToWideChar(CP_ACP, 0, g_PostProcessEndpoint, -1, widePostProcessEndpoint, 256);
+        MultiByteToWideChar(CP_ACP, 0, g_PostProcessModel, -1, widePostProcessModel, 128);
+        MultiByteToWideChar(CP_ACP, 0, g_PostProcessPrompt, -1, widePostProcessPrompt, 4096);
 
         SetDlgItemTextW(hDlg, IDC_OPENAI_TOKEN, wideToken);
         SetDlgItemTextW(hDlg, IDC_ENDPOINT, wideEndpoint);
         SetDlgItemTextW(hDlg, IDC_PROMPT, widePrompt);
+        SetDlgItemTextW(hDlg, IDC_POSTPROCESS_ENDPOINT, widePostProcessEndpoint);
+        SetDlgItemTextW(hDlg, IDC_POSTPROCESS_MODEL, widePostProcessModel);
+        SetDlgItemTextW(hDlg, IDC_POSTPROCESS_PROMPT, widePostProcessPrompt);
 
         // Set radio button based on the saved API type
         CheckRadioButton(hDlg,
                          IDC_RADIO_OPENAI,
                          IDC_RADIO_CUSTOM,
                          g_APIType == API_OPENAI ? IDC_RADIO_OPENAI : IDC_RADIO_CUSTOM);
-        
+
         // Initialize control states
         UpdateControlStates(hDlg);
         return TRUE;
@@ -254,27 +383,34 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
             // Update control states when radio buttons change
             UpdateControlStates(hDlg);
             break;
-            
         case IDOK:  // OK Button pressed
             {
                 // Get the entered OpenAI token and endpoint using wide character functions
                 wchar_t wideToken[256] = {0};
                 wchar_t wideEndpoint[256] = {0};
                 wchar_t widePrompt[1024] = {0};
+                wchar_t widePostProcessEndpoint[256] = {0};
+                wchar_t widePostProcessModel[128] = {0};
+                wchar_t widePostProcessPrompt[4096] = {0};
 
                 GetDlgItemTextW(hDlg, IDC_OPENAI_TOKEN, wideToken, 256);
                 GetDlgItemTextW(hDlg, IDC_ENDPOINT, wideEndpoint, 256);
                 GetDlgItemTextW(hDlg, IDC_PROMPT, widePrompt, 1024);
+                GetDlgItemTextW(hDlg, IDC_POSTPROCESS_ENDPOINT, widePostProcessEndpoint, 256);
+                GetDlgItemTextW(hDlg, IDC_POSTPROCESS_MODEL, widePostProcessModel, 128);
+                GetDlgItemTextW(hDlg, IDC_POSTPROCESS_PROMPT, widePostProcessPrompt, 4096);
 
                 // Convert wide to ASCII for our global variables
                 WideCharToMultiByte(CP_ACP, 0, wideToken, -1, g_OpenAIToken, sizeof(g_OpenAIToken), NULL, NULL);
                 WideCharToMultiByte(CP_ACP, 0, wideEndpoint, -1, g_Endpoint, sizeof(g_Endpoint), NULL, NULL);
                 WideCharToMultiByte(CP_ACP, 0, widePrompt, -1, g_PromptText, sizeof(g_PromptText), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, widePostProcessEndpoint, -1, g_PostProcessEndpoint, sizeof(g_PostProcessEndpoint), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, widePostProcessModel, -1, g_PostProcessModel, sizeof(g_PostProcessModel), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, widePostProcessPrompt, -1, g_PostProcessPrompt, sizeof(g_PostProcessPrompt), NULL, NULL);
 
                 // Get the selected API type
                 g_APIType = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED) ? API_OPENAI
                                                                                         : API_CUSTOM;
-
                 // Save settings to the registry
                 SaveSettingsToRegistry();
 
@@ -292,20 +428,28 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
                 wchar_t wideToken[256] = {0};
                 wchar_t wideEndpoint[256] = {0};
                 wchar_t widePrompt[1024] = {0};
+                wchar_t widePostProcessEndpoint[256] = {0};
+                wchar_t widePostProcessModel[128] = {0};
+                wchar_t widePostProcessPrompt[4096] = {0};
 
                 GetDlgItemTextW(hDlg, IDC_OPENAI_TOKEN, wideToken, 256);
                 GetDlgItemTextW(hDlg, IDC_ENDPOINT, wideEndpoint, 256);
                 GetDlgItemTextW(hDlg, IDC_PROMPT, widePrompt, 1024);
+                GetDlgItemTextW(hDlg, IDC_POSTPROCESS_ENDPOINT, widePostProcessEndpoint, 256);
+                GetDlgItemTextW(hDlg, IDC_POSTPROCESS_MODEL, widePostProcessModel, 128);
+                GetDlgItemTextW(hDlg, IDC_POSTPROCESS_PROMPT, widePostProcessPrompt, 4096);
 
                 // Convert wide to ASCII for our global variables
                 WideCharToMultiByte(CP_ACP, 0, wideToken, -1, g_OpenAIToken, sizeof(g_OpenAIToken), NULL, NULL);
                 WideCharToMultiByte(CP_ACP, 0, wideEndpoint, -1, g_Endpoint, sizeof(g_Endpoint), NULL, NULL);
                 WideCharToMultiByte(CP_ACP, 0, widePrompt, -1, g_PromptText, sizeof(g_PromptText), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, widePostProcessEndpoint, -1, g_PostProcessEndpoint, sizeof(g_PostProcessEndpoint), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, widePostProcessModel, -1, g_PostProcessModel, sizeof(g_PostProcessModel), NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, widePostProcessPrompt, -1, g_PostProcessPrompt, sizeof(g_PostProcessPrompt), NULL, NULL);
 
                 // Get the selected API type
                 g_APIType = (IsDlgButtonChecked(hDlg, IDC_RADIO_OPENAI) == BST_CHECKED) ? API_OPENAI
                                                                                         : API_CUSTOM;
-
                 // Save settings to the registry without closing the dialog
                 SaveSettingsToRegistry();
                 MessageBoxW(hDlg, L"Changes Applied", L"Info", MB_OK | MB_ICONINFORMATION);

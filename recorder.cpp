@@ -19,11 +19,13 @@
 
 #include <iostream>
 #include <optional>
+#include <cctype>
 
 #define BUFFER_SIZE 44100 * 2 * 1220  // a lot of seconds of 44100 Hz, 16-bit mono audio
 
 constexpr int WM_REQUEST_DONE = WM_USER + 1;
 constexpr int WM_TRAYICON = WM_USER + 2;
+constexpr int WM_RAW_READY = WM_USER + 3;
 
 
 #pragma comment(lib, "dsound.lib")
@@ -105,6 +107,9 @@ std::optional<std::string> returned_text;
 // Stats for the last request
 double last_audio_duration_seconds = 0.0;
 double last_request_time_seconds = 0.0;
+double last_postprocess_time_seconds = 0.0;
+std::string last_raw_text;
+std::string last_processed_text;
 
 constexpr int HKID_START_OR_STOP = 1;
 
@@ -121,6 +126,206 @@ size_t CurlWriteToStringCallback(void* contents, size_t size, size_t nmemb, std:
     size_t newLength = size * nmemb;
     s->append((char*)contents, newLength);
     return newLength;
+}
+
+std::string TrimString(const std::string& input)
+{
+    size_t start = 0;
+    while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start])))
+    {
+        ++start;
+    }
+
+    size_t end = input.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(input[end - 1])))
+    {
+        --end;
+    }
+
+    return input.substr(start, end - start);
+}
+
+std::string ExtractPostProcessOutput(const std::string& response)
+{
+    const std::string start_tag = "<output>";
+    const std::string end_tag = "</output>";
+    size_t start_pos = response.find(start_tag);
+    size_t end_pos = response.find(end_tag);
+    if (start_pos == std::string::npos || end_pos == std::string::npos || end_pos <= start_pos)
+    {
+        return {};
+    }
+
+    start_pos += start_tag.size();
+    return TrimString(response.substr(start_pos, end_pos - start_pos));
+}
+
+std::string BuildPostProcessPrompt(const std::string& prompt_template, const std::string& transcript)
+{
+    if (prompt_template.empty())
+    {
+        return transcript;
+    }
+
+    const std::string placeholder = "{{transcript}}";
+    std::string prompt = prompt_template;
+    size_t pos = 0;
+    while ((pos = prompt.find(placeholder, pos)) != std::string::npos)
+    {
+        prompt.replace(pos, placeholder.size(), transcript);
+        pos += transcript.size();
+    }
+
+    if (prompt == prompt_template)
+    {
+        prompt.append("\n");
+        prompt.append(transcript);
+    }
+
+    return prompt;
+}
+
+bool PostProcessTranscript(const std::string& transcript, std::string* processed_text, std::string* debug_text, std::string* error_message, double* elapsed_seconds)
+{
+    if (processed_text)
+    {
+        processed_text->clear();
+    }
+    if (debug_text)
+    {
+        debug_text->clear();
+    }
+    if (error_message)
+    {
+        error_message->clear();
+    }
+    if (elapsed_seconds)
+    {
+        *elapsed_seconds = 0.0;
+    }
+
+    const char* endpoint = GetPostProcessEndpoint();
+    if (!endpoint || endpoint[0] == '\0')
+    {
+        if (error_message)
+        {
+            *error_message = "Post-process endpoint is empty.";
+        }
+        return false;
+    }
+
+    const char* model = GetPostProcessModel();
+    if (!model || model[0] == '\0')
+    {
+        if (error_message)
+        {
+            *error_message = "Post-process model is empty.";
+        }
+        return false;
+    }
+
+    const char* prompt_template = GetPostProcessPrompt();
+    std::string prompt = BuildPostProcessPrompt(prompt_template ? prompt_template : "", transcript);
+
+    nlohmann::json payload = {
+        { "model", model },
+        { "prompt", prompt },
+        { "stream", false }
+    };
+    std::string payload_json = payload.dump();
+
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        if (error_message)
+        {
+            *error_message = "Failed to initialize curl for post-processing.";
+        }
+        return false;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, endpoint);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload_json.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, payload_json.size());
+
+    struct curl_slist* headerlist = NULL;
+    headerlist = curl_slist_append(headerlist, "Expect:");
+    headerlist = curl_slist_append(headerlist, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerlist);
+
+    std::string response;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteToStringCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    ULONGLONG start_time = GetTickCount64();
+    CURLcode res = curl_easy_perform(curl);
+    ULONGLONG end_time = GetTickCount64();
+    if (elapsed_seconds)
+    {
+        *elapsed_seconds = (end_time - start_time) / 1000.0;
+    }
+
+    curl_slist_free_all(headerlist);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK)
+    {
+        if (error_message)
+        {
+            *error_message = std::string("Post-process request failed: ") + curl_easy_strerror(res);
+        }
+        return false;
+    }
+
+    try
+    {
+        nlohmann::json response_obj = nlohmann::json::parse(response);
+        if (!response_obj.contains("response") || !response_obj["response"].is_string())
+        {
+            if (error_message)
+            {
+                *error_message = "Post-process response is missing the response field.";
+            }
+            if (debug_text)
+            {
+                *debug_text = response;
+            }
+            return false;
+        }
+
+        std::string raw_output = response_obj["response"];
+        std::string extracted = ExtractPostProcessOutput(raw_output);
+        if (extracted.empty())
+        {
+            if (error_message)
+            {
+                *error_message = "Post-process response did not contain a valid <output> section.";
+            }
+            if (debug_text)
+            {
+                *debug_text = raw_output;
+            }
+            return false;
+        }
+
+        if (processed_text)
+        {
+            *processed_text = extracted;
+        }
+        return true;
+    }
+    catch (const std::exception& ex)
+    {
+        if (error_message)
+        {
+            *error_message = std::string("Failed to parse post-process response: ") + ex.what();
+        }
+        if (debug_text)
+        {
+            *debug_text = response;
+        }
+        return false;
+    }
 }
 
 // Runs on a background thread; sends the mp3 file to Whisper, and waits for the results.
@@ -217,16 +422,59 @@ void SendToWhisper(const Mp3Segment& segment)
 
     the_results = response;
 
-    nlohmann::json results_obj = nlohmann::json::parse(the_results);
-    if (results_obj.contains("text"))
+    std::string raw_text;
+    try
     {
-        returned_text = results_obj["text"];
-        InjectTextToTarget(returned_text.value());
+        nlohmann::json results_obj = nlohmann::json::parse(the_results);
+        if (results_obj.contains("text") && results_obj["text"].is_string())
+        {
+            raw_text = results_obj["text"];
+        }
+        else
+        {
+            raw_text = the_results;
+        }
     }
-    else
+    catch (const std::exception&)
     {
-        returned_text = std::nullopt;
+        raw_text = the_results;
     }
+
+    last_raw_text = raw_text;
+    PostMessage(hwndDialog, WM_RAW_READY, 0, 0);
+    last_processed_text.clear();
+    last_postprocess_time_seconds = 0.0;
+
+    std::string inject_text = raw_text;
+    if (GetPostProcessEnabled())
+    {
+        std::string processed_text;
+        std::string debug_text;
+        std::string error_message;
+        double postprocess_elapsed = 0.0;
+        if (PostProcessTranscript(raw_text, &processed_text, &debug_text, &error_message, &postprocess_elapsed))
+        {
+            last_processed_text = processed_text;
+            last_postprocess_time_seconds = postprocess_elapsed;
+            inject_text = processed_text;
+        }
+        else
+        {
+            last_postprocess_time_seconds = postprocess_elapsed;
+            if (!debug_text.empty())
+            {
+                last_processed_text = "Post-process parse failed. Raw output:\r\n";
+                last_processed_text += debug_text;
+            }
+            if (!error_message.empty())
+            {
+                MessageBoxW(hwndDialog, to_wstring(error_message).c_str(), L"Post-process Error", MB_OK | MB_ICONERROR);
+            }
+        }
+    }
+
+    returned_text = inject_text;
+    InjectTextToTarget(inject_text);
 
     // Set stats from segment (so they're coherent with this request)
     last_audio_duration_seconds = segment.audio_duration_seconds;
@@ -313,25 +561,21 @@ std::vector<char> EncodeToMP3(IDirectSoundCaptureBuffer* lpdsCaptureBuffer, DWOR
 
 void ProcessResultsJson()
 {
-    nlohmann::json results_obj = nlohmann::json::parse(the_results);
-    if (results_obj.is_object() && results_obj.contains("text"))
-    {
-        std::string text = results_obj["text"];
-        SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), to_wstring(text).c_str());
-    }
-    else
-    {
-        // Just paste the entire thing
-        SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), to_wstring(std::string{ the_results }).c_str());
-    }
+    std::string raw_text = last_raw_text.empty() ? the_results : last_raw_text;
+    SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), to_wstring(raw_text).c_str());
+    SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES_PROCESSED), to_wstring(last_processed_text).c_str());
 
     // Update stats label
     wchar_t stats_buffer[128];
-    double ratio = (last_audio_duration_seconds > 0)
+    double whisper_ratio = (last_audio_duration_seconds > 0)
         ? last_request_time_seconds / last_audio_duration_seconds
         : 0.0;
-    swprintf(stats_buffer, 128, L"%.1fs audio \u2192 %.1fs processing (%.2fx realtime)",
-             last_audio_duration_seconds, last_request_time_seconds, ratio);
+    double post_ratio = (last_audio_duration_seconds > 0)
+        ? last_postprocess_time_seconds / last_audio_duration_seconds
+        : 0.0;
+    swprintf(stats_buffer, 128, L"%.1fs audio -> %.1fs whisper (%.2fx realtime), %.1fs post (%.2fx realtime)",
+             last_audio_duration_seconds, last_request_time_seconds, whisper_ratio,
+             last_postprocess_time_seconds, post_ratio);
     SetWindowText(GetDlgItem(hwndDialog, IDC_STATS), stats_buffer);
 }
 
@@ -611,12 +855,18 @@ INT_PTR CALLBACK DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         hwndDialog = hwnd;
         SendMessage(GetDlgItem(hwnd, IDC_SHOW_TOGGLE), BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessage(GetDlgItem(hwnd, IDC_POSTPROCESS_ENABLE), BM_SETCHECK,
+                    GetPostProcessEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
         return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wParam))
         {
         case IDC_RECORD:
             OnRecordOrStop(hwnd);
+            break;
+        case IDC_POSTPROCESS_ENABLE:
+            SetPostProcessEnabled(IsDlgButtonChecked(hwnd, IDC_POSTPROCESS_ENABLE) == BST_CHECKED);
+            SaveSettingsToRegistry();
             break;
         case IDC_SHOW_TOGGLE:
             ShowToggleWindow(IsDlgButtonChecked(hwnd, IDC_SHOW_TOGGLE) == BST_CHECKED);
@@ -647,6 +897,9 @@ INT_PTR CALLBACK DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         break;
     case WM_REQUEST_DONE:
         ProcessResultsJson();
+        break;
+    case WM_RAW_READY:
+        SetWindowText(GetDlgItem(hwndDialog, IDC_MESSAGES), to_wstring(last_raw_text).c_str());
         break;
     case WM_TRAYICON:
         if (lParam == WM_LBUTTONDOWN)

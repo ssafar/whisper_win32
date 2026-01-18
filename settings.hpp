@@ -13,9 +13,16 @@ void ShowSettingsDialog(HWND hParent);
 
 // Sets the values below
 void LoadSettingsFromRegistry();
+void SaveSettingsToRegistry();
 
 // Return the relevant global vars
 char* GetOpenAIToken();
 char* GetCustomEndpoint();
 APIType GetAPIType();
 char* GetPromptText();
+
+bool GetPostProcessEnabled();
+char* GetPostProcessEndpoint();
+char* GetPostProcessModel();
+char* GetPostProcessPrompt();
+void SetPostProcessEnabled(bool enabled);

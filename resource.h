@@ -21,6 +21,11 @@
 #define IDC_TOGGLE_SPACE                   115
 #define IDC_TOGGLE_BACKSPACE               116
 #define IDC_TOGGLE_NEWLINE                 117
+#define IDC_POSTPROCESS_ENABLE             118
+#define IDC_POSTPROCESS_ENDPOINT           119
+#define IDC_POSTPROCESS_MODEL              120
+#define IDC_POSTPROCESS_PROMPT             121
+#define IDC_MESSAGES_PROCESSED             122
 
 #define IDD_RECORDER                        100
 #define IDD_SETTINGS                        101
